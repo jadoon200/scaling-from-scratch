@@ -1,0 +1,17 @@
+# Claude config (local-only)
+.claude/
+CLAUDE.md
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Training artifacts
+checkpoints/
+runs/
+data/fineweb/
+*.npy
+*.bin
+*.safetensors
