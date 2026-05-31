@@ -20,7 +20,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from config import PEAK_BW_BYTES
-from kernels import rmsnorm_metal, rmsnorm_ref, softmax_metal, swiglu_metal, gemv_metal
+import math
+from kernels import (rmsnorm_metal, rmsnorm_ref, softmax_metal, swiglu_metal,
+                     gemv_metal, attention_metal, attention_ref)
 
 FIG = "report/figures"
 plt.rcParams.update({"figure.dpi": 130, "font.size": 11,
@@ -63,6 +65,14 @@ def measure():
     out.append(("GEMV", b / timeit(lambda: gemv_metal(W, xv)),
                 b / timeit(lambda: W @ xv), "mx matmul",
                 mx.max(mx.abs(gemv_metal(W, xv) - (W @ xv)).astype(mx.float32)).item()))
+
+    R, T, D = 256, 2048, 64
+    q = mx.random.normal((R, D)); K = mx.random.normal((R, T, D))
+    Vv = mx.random.normal((R, T, D)); mx.eval(q, K, Vv)
+    b = (2 * R * T * D + 2 * R * D) * 4
+    out.append(("Attention", b / timeit(lambda: attention_metal(q, K, Vv)),
+                b / timeit(lambda: attention_ref(q, K, Vv)), "naive",
+                mx.max(mx.abs(attention_metal(q, K, Vv) - attention_ref(q, K, Vv))).item()))
     return out
 
 

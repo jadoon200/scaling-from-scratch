@@ -6,10 +6,11 @@ Four hand-written Metal GPU kernels via `mx.fast.metal_kernel`, benchmarked agai
 
 | kernel | ours GB/s | % peak | baseline | speedup vs baseline | max err |
 |---|---|---|---|---|---|
-| RMSNorm | 127 | 84% | naive (38 GB/s) | 3.30× | 1.9e-06 |
+| RMSNorm | 127 | 85% | naive (38 GB/s) | 3.31× | 1.9e-06 |
 | Softmax | 126 | 84% | builtin (128 GB/s) | 0.98× | 7.5e-09 |
-| SwiGLU | 115 | 76% | naive (81 GB/s) | 1.42× | 1.9e-06 |
-| GEMV | 125 | 83% | mx matmul (122 GB/s) | 1.02× | 1.2e-04 |
+| SwiGLU | 115 | 77% | naive (81 GB/s) | 1.42× | 1.9e-06 |
+| GEMV | 126 | 84% | mx matmul (123 GB/s) | 1.03× | 1.2e-04 |
+| Attention | 123 | 82% | naive (43 GB/s) | 2.82× | 2.5e-07 |
 
 ## Takeaways
 

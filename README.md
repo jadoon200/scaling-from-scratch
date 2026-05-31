@@ -24,19 +24,24 @@ bandwidth as a fraction of the ~150 GB/s roof*.
 
 | kernel | op | ours | % peak | vs MLX baseline |
 |---|---|---|---|---|
-| **RMSNorm** | `x/√(mean(x²)+eps)·w` | 126 GB/s | 84% | **3.3×** over naive; = builtin |
+| **RMSNorm** | `x/√(mean(x²)+eps)·w` | 127 GB/s | 85% | **3.3×** over naive; = builtin |
 | **Softmax** | `exp(x−max)/Σexp` | 126 GB/s | 84% | matches fused `mx.softmax` |
 | **SwiGLU** | `silu(gate)·up` | 115 GB/s | 77% | **1.4×** over naive multi-op |
-| **GEMV** | `W @ x` (batch=1 decode) | 125 GB/s | 83% | **1.02× — beats `mx.matmul`** |
+| **GEMV** | `W @ x` (batch=1 decode) | 126 GB/s | 84% | **1.03× — beats `mx.matmul`** |
+| **Attention** | flash-style decode `softmax(qKᵀ)V` | 123 GB/s | 82% | **2.8×** over naive; **beats `mx.fast.sdpa`** |
 
-All four are memory-bound, so the figure of merit is bandwidth vs the ~150 GB/s
-roof. The custom kernels reach **77–84% of peak**, match or slightly beat MLX's
+All five are memory-bound, so the figure of merit is bandwidth vs the ~150 GB/s
+roof. The custom kernels reach **77–85% of peak**, match or slightly beat MLX's
 optimized builtins, and crush the naive multi-op paths — correct to ~1e-6 (fp32;
-~1e-4 for the GEMV's wide dot products).
+~1e-4 for the wide GEMV dot products).
 
-The standout is **GEMV slightly beating the general `mx.matmul`**: batch=1 decode
-is bound by reading the weight matrix once, and a dedicated GEMV carries less
-overhead than a general matmul kernel.
+Two standouts:
+- **GEMV beats the general `mx.matmul`** — batch=1 decode is bound by reading the
+  weight matrix once, and a dedicated GEMV has less overhead than a general matmul.
+- **Fused attention beats `mx.fast.scaled_dot_product_attention`** for the decode
+  case (82% vs 79% of peak) — it keeps the score vector in threadgroup (on-chip)
+  memory and never writes it to global memory. That is the Flash Attention insight,
+  hand-written.
 
 ## Layout
 
@@ -46,6 +51,7 @@ kernels/
   softmax.py     fused row softmax (two reductions: max, sum)
   swiglu.py      fused silu(gate)*up (elementwise)
   gemv.py        batch=1 matrix-vector (the decode bottleneck)
+  attention.py   flash-style fused decode attention (scores stay on-chip)
 config.py        chip peak specs
 bench.py         correctness + speedup + achieved bandwidth, all kernels
 report.py        figures + RESULTS.md
@@ -60,6 +66,7 @@ python kernels/rmsnorm.py         # per-kernel correctness checks
 python kernels/softmax.py
 python kernels/swiglu.py
 python kernels/gemv.py
+python kernels/attention.py
 python bench.py                   # full bandwidth + speedup table
 python report.py                  # figures + RESULTS.md
 ```
@@ -67,6 +74,6 @@ python report.py                  # figures + RESULTS.md
 See [`report/RESULTS.md`](report/RESULTS.md) for the full writeup.
 
 ## Possible extensions
-- A fused attention (Flash-style) kernel — the canonical example
 - Quantized GEMV (tie-in with project #2: read INT4 weights directly in the kernel)
-- 2D-tiled GEMM for the prefill / training regime
+- Tiled flash attention for the prefill / training regime (Tq > 1, K/V blocking)
+- 2D-tiled GEMM for the compute-bound (large-batch) regime

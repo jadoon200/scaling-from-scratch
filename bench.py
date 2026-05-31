@@ -17,7 +17,7 @@ import mlx.nn as nn
 
 from config import PEAK_BW_BYTES
 from kernels import (rmsnorm_metal, rmsnorm_ref, softmax_metal,
-                     swiglu_metal, gemv_metal)
+                     swiglu_metal, gemv_metal, attention_metal, attention_ref)
 
 
 def timeit(fn, iters=100, warmup=10):
@@ -84,6 +84,26 @@ def main():
     tm = timeit(lambda: W @ xv)
     row("gemv mx-matmul", tm, b, tm, 0.0)
     row("gemv ours", timeit(lambda: gemv_metal(W, xv)), b, tm, e)
+    print()
+
+    # ---- Fused attention (decode: 1 query vs T keys) ----
+    R, T, D = 256, 2048, 64
+    q = mx.random.normal((R, D)); K = mx.random.normal((R, T, D))
+    Vv = mx.random.normal((R, T, D)); mx.eval(q, K, Vv)
+    b = (2 * R * T * D + 2 * R * D) * 4  # read K + V dominate
+    ref = attention_ref(q, K, Vv); ours = attention_metal(q, K, Vv); mx.eval(ref, ours)
+    e = mx.max(mx.abs(ours - ref)).item()
+    tn = timeit(lambda: attention_ref(q, K, Vv))
+    row("attention naive", tn, b, tn, 0.0)
+    row("attention ours", timeit(lambda: attention_metal(q, K, Vv)), b, tn, e)
+    # MLX fused SDPA builtin as the gold-standard baseline
+    import math as _m
+    qb = q.reshape(R, 1, 1, D); Kb = K.reshape(R, 1, T, D); Vb = Vv.reshape(R, 1, T, D)
+    sc = 1.0 / _m.sqrt(D)
+    ts = timeit(lambda: mx.fast.scaled_dot_product_attention(qb, Kb, Vb, scale=sc))
+    es = mx.max(mx.abs(
+        mx.fast.scaled_dot_product_attention(qb, Kb, Vb, scale=sc).reshape(R, D) - ref)).item()
+    row("attention sdpa", ts, b, tn, es)
 
 
 if __name__ == "__main__":
