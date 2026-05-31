@@ -67,6 +67,17 @@ bits/weight counts that overhead (`python config.py` prints the table).
 
 See [`report/RESULTS.md`](report/RESULTS.md) for figures and the full writeup.
 
+## Tests
+
+```bash
+pytest                 # full suite (all CPU-runnable here)
+```
+
+The quantization math runs on the CPU device, so the whole suite is portable and
+runs in CI (`.github/workflows/tests.yml`, macOS arm64): round-trip error bounds,
+INT4 pack/unpack losslessness, group-size fidelity, effective-bits accounting,
+and parity between the from-scratch `QuantizedLinear` and MLX's fused kernel.
+
 ## Setup & usage
 
 Reuses project #1's conda env (identical deps):
