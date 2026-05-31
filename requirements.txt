@@ -1,0 +1,6 @@
+mlx==0.31.2
+tiktoken==0.13.0
+datasets==4.8.5
+scipy==1.17.1
+matplotlib==3.10.9
+numpy==2.4.6

@@ -69,28 +69,39 @@ def main():
     if args.data_dir is not None: tc.data_dir = args.data_dir
     if args.run_name is not None: tc.run_name = args.run_name
 
+    metrics = train_model(cfg, tc, verbose=True, save=True)
+    print(f"\nfinal val_loss {metrics['val_loss']:.3f} "
+          f"(ppl {math.exp(metrics['val_loss']):.1f}) | "
+          f"avg MFU {metrics['avg_mfu']*100:.1f}%")
+
+
+def train_model(cfg: ModelConfig, tc: TrainConfig,
+                verbose: bool = True, save: bool = False) -> dict:
+    """Train one model and return final metrics. Reused by scaling.py.
+
+    Returns dict with: val_loss, train_loss, n_params, n_params_non_embedding,
+    tokens_seen, avg_mfu.
+    """
     mx.random.seed(tc.seed)
 
-    # --- data ---
     train_ds = TokenDataset(os.path.join(tc.data_dir, "train.bin"), cfg.seq_len)
     val_ds = TokenDataset(os.path.join(tc.data_dir, "val.bin"), cfg.seq_len)
     batches = iterate_batches(train_ds, tc.batch_size, seed=tc.seed)
 
-    # --- model ---
     model = Transformer(cfg)
     mx.eval(model.parameters())
     n_params = sum(p.size for _, p in tree_flatten(model.parameters()))
     tokens_per_step = tc.batch_size * cfg.seq_len * tc.grad_accum_steps
 
-    print(f"model: {n_params/1e6:.2f}M params "
-          f"({cfg.n_params_non_embedding/1e6:.2f}M non-embed)  "
-          f"d={cfg.d_model} L={cfg.n_layers} h={cfg.n_heads}")
-    print(f"data:  {train_ds.n_tokens/1e6:.2f}M train tokens, seq_len={cfg.seq_len}")
-    print(f"step:  {tokens_per_step:,} tokens/step  "
-          f"({6*n_params*tokens_per_step/1e9:.1f} GFLOPs/step est.)")
-    print(f"peak:  {PEAK_FLOPS_FP16/1e12:.1f} TFLOP/s fp16\n")
+    if verbose:
+        print(f"model: {n_params/1e6:.2f}M params "
+              f"({cfg.n_params_non_embedding/1e6:.2f}M non-embed)  "
+              f"d={cfg.d_model} L={cfg.n_layers} h={cfg.n_heads}")
+        print(f"data:  {train_ds.n_tokens/1e6:.2f}M train tokens, seq_len={cfg.seq_len}")
+        print(f"step:  {tokens_per_step:,} tokens/step  "
+              f"({6*n_params*tokens_per_step/1e9:.1f} GFLOPs/step est.)")
+        print(f"peak:  {PEAK_FLOPS_FP16/1e12:.1f} TFLOP/s fp16\n")
 
-    # --- optimizer ---
     opt = optim.AdamW(learning_rate=tc.lr, betas=[tc.beta1, tc.beta2],
                       weight_decay=tc.weight_decay)
 
@@ -106,9 +117,12 @@ def main():
         opt.update(model, grads)
         return loss, gnorm
 
-    os.makedirs(tc.ckpt_dir, exist_ok=True)
+    if save:
+        os.makedirs(tc.ckpt_dir, exist_ok=True)
     model.train()
     running_t = 0.0
+    mfu_sum, mfu_n = 0.0, 0
+    last_loss = float("nan")
 
     for it in range(tc.max_steps):
         lr = cosine_lr(it, tc)
@@ -127,26 +141,39 @@ def main():
             toks_per_sec = tokens_per_step / (step_ms / 1000)
             achieved_flops = 6 * n_params * tokens_per_step / (step_ms / 1000)
             mfu = achieved_flops / PEAK_FLOPS_FP16
-            print(f"step {it:>5} | loss {loss.item():6.3f} | lr {lr:.2e} | "
-                  f"gnorm {gnorm.item():5.2f} | {step_ms:6.1f} ms | "
-                  f"{toks_per_sec/1e3:6.1f}k tok/s | MFU {mfu*100:4.1f}%")
+            last_loss = loss.item()
+            if it > 0:  # skip step 0 (kernel compilation) in the MFU average
+                mfu_sum += mfu; mfu_n += 1
+            if verbose:
+                print(f"step {it:>5} | loss {last_loss:6.3f} | lr {lr:.2e} | "
+                      f"gnorm {gnorm.item():5.2f} | {step_ms:6.1f} ms | "
+                      f"{toks_per_sec/1e3:6.1f}k tok/s | MFU {mfu*100:4.1f}%")
 
-        if it > 0 and it % tc.eval_every == 0:
-            val_loss = evaluate(model, val_ds, tc)
-            print(f"  >> eval step {it}: val_loss {val_loss:.3f} "
-                  f"(ppl {math.exp(val_loss):.1f})")
+        if verbose and it > 0 and it % tc.eval_every == 0:
+            vl = evaluate(model, val_ds, tc)
+            print(f"  >> eval step {it}: val_loss {vl:.3f} (ppl {math.exp(vl):.1f})")
 
-        if it > 0 and it % tc.ckpt_every == 0:
+        if save and it > 0 and it % tc.ckpt_every == 0:
             path = os.path.join(tc.ckpt_dir, f"{tc.run_name}_step{it}.safetensors")
             model.save_weights(path)
-            print(f"  >> saved {path}")
+            if verbose:
+                print(f"  >> saved {path}")
 
-    # final
     val_loss = evaluate(model, val_ds, tc)
-    print(f"\nfinal val_loss {val_loss:.3f} (ppl {math.exp(val_loss):.1f})")
-    path = os.path.join(tc.ckpt_dir, f"{tc.run_name}_final.safetensors")
-    model.save_weights(path)
-    print(f"saved {path}")
+    if save:
+        path = os.path.join(tc.ckpt_dir, f"{tc.run_name}_final.safetensors")
+        model.save_weights(path)
+        if verbose:
+            print(f"saved {path}")
+
+    return {
+        "val_loss": val_loss,
+        "train_loss": last_loss,
+        "n_params": n_params,
+        "n_params_non_embedding": cfg.n_params_non_embedding,
+        "tokens_seen": tc.max_steps * tokens_per_step,
+        "avg_mfu": mfu_sum / max(1, mfu_n),
+    }
 
 
 if __name__ == "__main__":
