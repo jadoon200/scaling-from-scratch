@@ -72,6 +72,29 @@ python report.py
 
 **Chinchilla scaling**: fit `L(N, D) = E + A/N^α + B/D^β` over a sweep of non-embedding param counts N and token budgets D. The target result — compute-optimal allocation scales as `N* ∝ C^0.5`, `D* ∝ C^0.5` (grow model and data together).
 
+## Generation samples
+
+The 10M model trained to convergence (val loss **5.32**, ppl **205**, 31% MFU) on
+FineWeb-Edu produces real, grammatical English (top-p, temp 0.8):
+
+```
+The history of the three noble is a poor and good had a most attractive and vast
+life-based property. It is also one of the most common ones that are far from the
+middle of the world...
+
+Scientists have discovered that the majority of the global climate, though many of
+them have been developed in recent years. The biggest fact is that some countries
+have seen these benefit in the long-term...
+```
+
+It's locally coherent rather than globally — expected for a 10M-param model on a
+~45M-token slice — but it's real text, decoded through the KV cache at ~700 tok/s.
+
+```bash
+python generate.py --preset 10M --ckpt checkpoints/converged_final.safetensors \
+  --prompt "The history of" --strategy top-p
+```
+
 ## Hardware
 
 Developed on Apple M3 Pro (18 GB unified memory). MLX uses unified memory — no `.to(device)`, weights and activations share the chip. Peak specs are configurable in `config.py` for other M-series chips.
