@@ -40,6 +40,26 @@ def time_fn(fn, iters: int = 20, warmup: int = 3) -> float:
     return (time.perf_counter() - t0) / iters
 
 
+def estimate_peak_gb(cfg, n_params: int, B: int, T: int, backward: bool) -> float:
+    """Conservative upper-bound estimate of peak memory for one step, in GB.
+
+    This is a heuristic, not exact: MLX fuses/recomputes some intermediates, so
+    the true peak is usually lower. We deliberately over-estimate so the guard
+    errs toward skipping a config rather than letting it thrash swap.
+
+    Terms (fp32, 4 bytes/elt):
+      - weights, plus grads + optimizer-ish slack on the backward pass
+      - per-layer activations kept for backward: residual stream (d) and the
+        wide FFN hidden (d_ff), times an overhead factor for the several
+        intermediate tensors MLX may retain
+    """
+    BYTES = 4  # MLX defaults to float32
+    weight_term = n_params * BYTES * (3 if backward else 1)
+    overhead = 20 if backward else 4  # activation tensors retained per layer
+    act_term = cfg.n_layers * B * T * (cfg.d_model + cfg.d_ff) * overhead * BYTES
+    return (weight_term + act_term) / 1e9
+
+
 def bytes_moved(n_params: int, acts: int, backward: bool) -> int:
     """Rough bytes streamed through memory in fp16 (2 bytes/elt).
 
@@ -56,6 +76,9 @@ def main():
     ap.add_argument("--preset", choices=list(SCALING_PRESETS), default=None)
     ap.add_argument("--backward", action="store_true",
                     help="profile forward+backward instead of forward only")
+    ap.add_argument("--mem-budget-gb", type=float, default=14.0,
+                    help="skip configs whose estimated peak memory exceeds this; "
+                         "default 14 GB leaves headroom on an 18 GB machine")
     args = ap.parse_args()
 
     cfg = SCALING_PRESETS[args.preset] if args.preset else ModelConfig()
@@ -79,9 +102,13 @@ def main():
     lg = nn.value_and_grad(model, loss_fn)
 
     for B, T in grid:
-        if T > cfg.seq_len:
-            # build a temporary model at this seq_len for the score-matrix cost
-            pass  # seq_len only affects mask size here; model handles any T
+        est_gb = estimate_peak_gb(cfg, n_params, B, T, args.backward)
+        if est_gb > args.mem_budget_gb:
+            print(f"{B:>5} {T:>5} {'--':>8} {'skip':>8} "
+                  f"(est ~{est_gb:.1f} GB > {args.mem_budget_gb:.0f} GB budget; "
+                  f"would thrash swap)")
+            continue
+
         x = mx.random.randint(0, cfg.vocab_size, (B, T))
         y = mx.random.randint(0, cfg.vocab_size, (B, T))
         mx.eval(x, y)
