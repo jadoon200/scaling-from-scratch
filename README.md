@@ -94,7 +94,19 @@ python report.py                  # figures + RESULTS.md
 
 See [`report/RESULTS.md`](report/RESULTS.md) for the full writeup.
 
+## Tests
+
+```bash
+pytest                 # full suite on Apple Silicon — all 6 kernels vs reference
+pytest -m "not gpu"    # portable tier — what CI runs (no Metal GPU)
+```
+
+The kernels use `mx.fast.metal_kernel` (Metal-only), so the kernel-vs-reference
+tests are marked `@gpu` and run locally on Apple Silicon. CI
+(`.github/workflows/tests.yml`, macOS arm64, no GPU) runs the portable tier:
+sanity checks on the pure-MLX reference implementations (RMSNorm gives unit RMS,
+softmax rows sum to 1, etc.). Gated by `mx.metal.is_available()`.
+
 ## Possible extensions
-- Quantized GEMV (tie-in with project #2: read INT4 weights directly in the kernel)
 - Tiled flash attention for the prefill / training regime (Tq > 1, K/V blocking)
 - 2D-tiled GEMM for the compute-bound (large-batch) regime
