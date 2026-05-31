@@ -59,9 +59,11 @@ python generate.py --prompt "The history of" --max-tokens 100 --strategy top-p
 # 4. roofline profile across batch/seq configs
 python profile.py --preset 10M
 
-# 5. scaling-law sweep + fit
-python scaling.py --sweep --presets 1M 3M 10M --budgets 50_000_000 150_000_000 400_000_000
-python scaling.py --fit
+# 5. scaling-law sweep + fit (auto-generates report/ figures + RESULTS.md)
+python scaling.py --sweep --presets 1M 3M 10M --budgets 2_000_000 6_000_000 18_000_000
+
+# 6. (re)build presentation figures + writeup any time
+python report.py
 ```
 
 ## The metrics are the point

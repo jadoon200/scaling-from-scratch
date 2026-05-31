@@ -168,11 +168,19 @@ def main():
                          "for every budget or D collapses and the fit degenerates")
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--data-dir", type=str, default="data/fineweb")
+    ap.add_argument("--no-report", action="store_true",
+                    help="skip auto-generating report figures after a sweep")
     args = ap.parse_args()
 
     if args.sweep:
         run_sweep(args.presets, args.budgets, args.steps_cap,
                   args.batch_size, args.data_dir)
+        # graphs are part of the pipeline: a sweep always produces the figures
+        # and the RESULTS.md writeup unless explicitly suppressed
+        if not args.no_report:
+            print("\n=== building report figures + RESULTS.md ===")
+            import report
+            report.main()
     if args.fit or not args.sweep:
         fit(plot=True)
 
