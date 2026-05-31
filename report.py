@@ -124,20 +124,29 @@ def fig_scaling(results, fit_out):
     L = np.array([r["val_loss"] for r in results], float)
     C = 6 * N * D
 
-    # (1) loss vs compute
-    fig, ax = plt.subplots(figsize=(7, 4.5))
-    sc = ax.scatter(C, L, c=np.log10(N), cmap="viridis", s=70, zorder=3)
-    if fit_out is not None:
-        popt, rmse, chin = fit_out
-        order = np.argsort(C)
-        ax.plot(C[order], chin((N[order], D[order]), *popt), "k--", alpha=0.6,
-                label=f"Chinchilla fit (RMSE {rmse:.3f})")
-        ax.legend()
+    # (1) loss vs compute — one smooth fit curve per model size (Kaplan-style)
+    fig, ax = plt.subplots(figsize=(7.5, 4.8))
+    uniq_N = sorted(set(N))
+    colors = plt.cm.viridis(np.linspace(0.15, 0.9, len(uniq_N)))
+    for n_val, col in zip(uniq_N, colors):
+        m = N == n_val
+        Dn, Ln = D[m], L[m]
+        order = np.argsort(Dn)
+        lbl = f"N={n_val/1e6:.1f}M"
+        ax.scatter(6 * n_val * Dn, Ln, color=col, s=70, zorder=3, label=lbl)
+        if fit_out is not None:
+            popt, rmse, chin = fit_out
+            d_line = np.logspace(np.log10(Dn.min()), np.log10(Dn.max()), 50)
+            ax.plot(6 * n_val * d_line, chin((np.full_like(d_line, n_val), d_line), *popt),
+                    color=col, ls="--", alpha=0.8)
     ax.set_xscale("log")
     ax.set_xlabel("training compute  C = 6ND  (FLOPs)")
     ax.set_ylabel("validation loss (nats)")
-    ax.set_title("Scaling: loss decreases with compute")
-    cb = fig.colorbar(sc, ax=ax); cb.set_label("log10(non-embedding params)")
+    title = "Scaling: loss vs compute, one curve per model size"
+    if fit_out is not None:
+        title += f"  (Chinchilla fit RMSE {fit_out[1]:.3f})"
+    ax.set_title(title, fontsize=10)
+    ax.legend(title="non-embedding params")
     fig.tight_layout()
     _save(fig, "scaling_compute.png")
 

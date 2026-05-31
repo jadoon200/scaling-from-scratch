@@ -20,6 +20,8 @@ Run:
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import time
 
 import mlx.core as mx
