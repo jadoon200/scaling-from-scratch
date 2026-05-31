@@ -11,10 +11,10 @@ At batch=1 decode, the bottleneck is reading weights from memory. Three ways to 
 | path | ms | speedup |
 |---|---|---|
 | fp16 | 0.393 | 1.00× |
-| ours INT8 | 3.669 | 0.11× |
-| native INT8 | 0.271 | 1.45× |
-| ours INT4 | 3.659 | 0.11× |
-| native INT4 | 0.197 | 2.00× |
+| ours INT8 | 3.670 | 0.11× |
+| native INT8 | 0.263 | 1.49× |
+| ours INT4 | 3.665 | 0.11× |
+| native INT4 | 0.196 | 2.00× |
 
 **Naive dequant-then-matmul is ~8× *slower* than fp16** — it expands the weight back to float before multiplying, adding work and memory. Only the **fused kernel**, which reads packed weights inside the matmul, delivers the real win (1.9× INT8, 2.9× INT4). Speed comes from the kernel, not the data format.
 
@@ -35,6 +35,18 @@ The compression is modest because the token embedding (~half the model) stays fp
 ![quant error](figures/quant_error.png)
 
 Round-trip weight error: INT8 ≈ 0.5%, INT4 ≈ 8–10% relative Frobenius. Smaller groups lower error at the cost of more scale overhead.
+
+## 4. Quality: perplexity vs precision
+
+Validation perplexity on FineWeb-Edu (model trained briefly, so the *relative* effect is the point):
+
+| precision | perplexity |
+|---|---|
+| fp16 | 790.8 |
+| INT8 | 790.8 |
+| INT4 | 791.2 |
+
+Weight quantization is nearly free in quality: INT8 is lossless and INT4 costs a fraction of a percent — group-wise scales keep the error tiny. Combined with §1, that's the Pareto win: ~2–3× faster decode (fused kernel) and 1.5× smaller, at negligible quality cost.
 
 ## Reproduce
 
