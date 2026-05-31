@@ -66,6 +66,18 @@ python scaling.py --sweep --presets 1M 3M 10M --budgets 2_000_000 6_000_000 18_0
 python report.py
 ```
 
+## Tests
+
+```bash
+pytest                 # full suite (Apple Silicon: includes the @gpu KV-cache test)
+pytest -m "not gpu"    # portable tier only — what CI runs
+```
+
+Tests are device-aware: pure-MLX math (param accounting, init loss, shapes) runs
+on the CPU device and passes anywhere, including the GitHub Actions macOS runner
+(`.github/workflows/tests.yml`). Anything needing Metal is marked `@gpu` and
+skipped automatically off Apple Silicon.
+
 ## The metrics are the point
 
 **MFU** (model FLOPs utilization) = achieved FLOP/s ÷ chip peak FLOP/s — the headline training-efficiency number. On an M3 Pro (~6.4 TFLOP/s fp16, ~150 GB/s, ridge ≈ 43 FLOP/byte), a healthy small model lands ~20–40%; it's **memory-bound** at small scale because the embedding table dominates (84% of params on the 1M preset, 25% on the 100M preset — `python config.py` prints the breakdown).

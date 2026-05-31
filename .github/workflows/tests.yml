@@ -1,0 +1,23 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  portable:
+    # GitHub's macOS runners are Apple Silicon (arm64) so MLX installs, but they
+    # have no Metal GPU for compute — so we run only the portable (CPU) tier.
+    # The @gpu kernel tests run locally on Apple Silicon (see README).
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+      - name: Run portable tests (CPU)
+        run: pytest -m "not gpu" -v
