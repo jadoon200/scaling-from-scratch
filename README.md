@@ -18,36 +18,36 @@ custom kernel cuts the memory traffic and the launches, which is the entire win
 for a memory-bound op. The figure of merit isn't FLOPs — it's *achieved
 bandwidth as a fraction of the ~150 GB/s roof*.
 
-## Result: fused RMSNorm
+## Results: four kernels
 
-```
-y[i] = x[i] / sqrt(mean(x²) + eps) * w[i]
-```
+![bandwidth](report/figures/bandwidth_all.png)
 
-One threadgroup per row: threads cooperatively reduce the sum of squares in
-threadgroup memory (fp32 accumulation), then write the normalized output — one
-read of x, one write of y.
-
-| size | naive | ours (custom) | builtin | ours speedup |
+| kernel | op | ours | % peak | vs MLX baseline |
 |---|---|---|---|---|
-| 4096×512 | 16 GB/s | 34 GB/s | 51 GB/s | 2.1× |
-| 4096×1024 | 30 GB/s | 78 GB/s | 81 GB/s | 2.6× |
-| 32768×2048 | 38 GB/s | **127 GB/s (84% peak)** | 127 GB/s | **3.3×** |
+| **RMSNorm** | `x/√(mean(x²)+eps)·w` | 126 GB/s | 84% | **3.3×** over naive; = builtin |
+| **Softmax** | `exp(x−max)/Σexp` | 126 GB/s | 84% | matches fused `mx.softmax` |
+| **SwiGLU** | `silu(gate)·up` | 115 GB/s | 77% | **1.4×** over naive multi-op |
+| **GEMV** | `W @ x` (batch=1 decode) | 125 GB/s | 83% | **1.02× — beats `mx.matmul`** |
 
-![bandwidth](report/figures/bandwidth.png)
+All four are memory-bound, so the figure of merit is bandwidth vs the ~150 GB/s
+roof. The custom kernels reach **77–84% of peak**, match or slightly beat MLX's
+optimized builtins, and crush the naive multi-op paths — correct to ~1e-6 (fp32;
+~1e-4 for the GEMV's wide dot products).
 
-At scale the from-scratch Metal kernel reaches **84% of peak memory bandwidth**,
-**matching MLX's hand-optimized builtin** and ~3.3× the naive version — correct
-to ~1e-6 vs the reference. At small sizes the builtin's launch tuning still wins;
-the gap closes as the problem grows.
+The standout is **GEMV slightly beating the general `mx.matmul`**: batch=1 decode
+is bound by reading the weight matrix once, and a dedicated GEMV carries less
+overhead than a general matmul kernel.
 
 ## Layout
 
 ```
 kernels/
-  rmsnorm.py     fused RMSNorm: custom Metal kernel + pure-MLX reference
+  rmsnorm.py     fused RMSNorm   (threadgroup-per-row reduction)
+  softmax.py     fused row softmax (two reductions: max, sum)
+  swiglu.py      fused silu(gate)*up (elementwise)
+  gemv.py        batch=1 matrix-vector (the decode bottleneck)
 config.py        chip peak specs
-bench.py         correctness + speedup + achieved bandwidth
+bench.py         correctness + speedup + achieved bandwidth, all kernels
 report.py        figures + RESULTS.md
 ```
 
@@ -56,14 +56,17 @@ report.py        figures + RESULTS.md
 Reuses project #1's conda env:
 ```bash
 conda activate mlx-transformer    # or: pip install -r requirements.txt
-python kernels/rmsnorm.py         # correctness check
-python bench.py                   # bandwidth + speedup table
+python kernels/rmsnorm.py         # per-kernel correctness checks
+python kernels/softmax.py
+python kernels/swiglu.py
+python kernels/gemv.py
+python bench.py                   # full bandwidth + speedup table
 python report.py                  # figures + RESULTS.md
 ```
 
 See [`report/RESULTS.md`](report/RESULTS.md) for the full writeup.
 
-## Next kernels
-- Fused softmax (row-wise, online/streaming max+sum)
-- Fused SwiGLU activation (`silu(gate) * up` in one pass)
-- A batch=1 GEMV tuned for the decode bottleneck
+## Possible extensions
+- A fused attention (Flash-style) kernel — the canonical example
+- Quantized GEMV (tie-in with project #2: read INT4 weights directly in the kernel)
+- 2D-tiled GEMM for the prefill / training regime

@@ -1,25 +1,22 @@
 # MLX Custom Metal Kernels — Results
 
-Hand-written Metal GPU kernels via `mx.fast.metal_kernel`, benchmarked against MLX's naive multi-op path and its hand-optimized builtin on an Apple M3 Pro (peak ~150 GB/s).
+Four hand-written Metal GPU kernels via `mx.fast.metal_kernel`, benchmarked against MLX's naive multi-op path and optimized builtins on an Apple M3 Pro (peak ~150 GB/s). All four ops are memory-bound, so the figure of merit is achieved bandwidth vs the roof.
 
-## Fused RMSNorm
+![bandwidth](figures/bandwidth_all.png)
 
-RMSNorm is memory-bound. The naive pure-MLX version runs as several kernels (square, mean, rsqrt, two multiplies), each re-streaming the activations. The custom kernel fuses everything: one read of x, the sum-of-squares reduction in threadgroup memory, one write of y.
+| kernel | ours GB/s | % peak | baseline | speedup vs baseline | max err |
+|---|---|---|---|---|---|
+| RMSNorm | 127 | 84% | naive (38 GB/s) | 3.30× | 1.9e-06 |
+| Softmax | 126 | 84% | builtin (128 GB/s) | 0.98× | 7.5e-09 |
+| SwiGLU | 115 | 76% | naive (81 GB/s) | 1.42× | 1.9e-06 |
+| GEMV | 125 | 83% | mx matmul (122 GB/s) | 1.02× | 1.2e-04 |
 
-![bandwidth](figures/bandwidth.png)
+## Takeaways
 
-![speedup](figures/speedup.png)
-
-At 32768×2048 the custom kernel reaches **84% of peak bandwidth** (126 GB/s), a **3.3× speedup** over naive — matching MLX's builtin (85% of peak). Correctness vs the reference is ~1e-6 (fp32).
-
-| size | naive GB/s | ours GB/s | builtin GB/s | ours speedup |
-|---|---|---|---|---|
-| 4096×512 | 22 | 39 | 44 | 1.76× |
-| 4096×1024 | 30 | 78 | 80 | 2.61× |
-| 8192×2048 | 36 | 108 | 111 | 2.99× |
-| 32768×2048 | 38 | 126 | 128 | 3.29× |
-
-Takeaway: for a memory-bound op the win is fewer passes over memory and fewer kernel launches. A from-scratch Metal kernel reaches the same bandwidth as the vendor-optimized builtin.
+- **RMSNorm / Softmax**: the custom kernels reach ~84% of peak bandwidth, matching MLX's hand-optimized builtins and ~3× the naive multi-op path. For a memory-bound op, fusing the passes is the win.
+- **SwiGLU**: 1.4× over the naive `silu(gate)*up` (three elementwise kernels → one).
+- **GEMV** (the batch=1 decode bottleneck): the specialized kernel slightly *beats* the general `mx.matmul`, at ~83% of peak — decode is bandwidth-bound on reading the weight matrix, and a dedicated GEMV has less overhead than a general matmul.
+- Correctness is ~1e-6 (fp32) for the elementwise/reduction kernels and ~1e-4 for GEMV (4096–8192-wide fp32 dot products).
 
 ## Reproduce
 

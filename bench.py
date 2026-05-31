@@ -1,13 +1,9 @@
-"""Benchmark custom Metal kernels: correctness, speedup, achieved bandwidth.
+"""Benchmark all custom Metal kernels: correctness, speedup, achieved bandwidth.
 
-Compares three RMSNorm implementations:
-  - naive: pure-MLX multi-op (square, mean, rsqrt, mul, mul) — several kernels
-  - ours:  the fused custom Metal kernel (kernels/rmsnorm.py)
-  - fused: mx.fast.rms_norm, MLX's hand-optimized builtin (the gold standard)
-
-RMSNorm is memory-bound, so the figure of merit is achieved bandwidth: bytes
-moved / time, against the ~150 GB/s roof. A good fused kernel approaches it; the
-naive version wastes bandwidth on extra passes.
+For each kernel we compare the custom Metal version against MLX's path (a naive
+multi-op reference and/or the optimized builtin) and report achieved memory
+bandwidth as a fraction of the ~150 GB/s roof. These ops are memory-bound, so
+bandwidth utilization is the figure of merit.
 
     python bench.py
 """
@@ -17,9 +13,11 @@ from __future__ import annotations
 import time
 
 import mlx.core as mx
+import mlx.nn as nn
 
 from config import PEAK_BW_BYTES
-from kernels.rmsnorm import rmsnorm_metal, rmsnorm_ref
+from kernels import (rmsnorm_metal, rmsnorm_ref, softmax_metal,
+                     swiglu_metal, gemv_metal)
 
 
 def timeit(fn, iters=100, warmup=10):
@@ -31,42 +29,62 @@ def timeit(fn, iters=100, warmup=10):
     return (time.perf_counter() - t0) / iters
 
 
-def bench_rmsnorm():
-    eps = 1e-5
-    shapes = [(8 * 512, 512), (8 * 512, 1024), (32 * 1024, 2048)]
-    print(f"{'rows x D':>14} {'impl':>7} {'us':>9} {'GB/s':>7} {'%peak':>6} "
-          f"{'speedup':>8} {'maxerr':>9}")
+def _bw(bytes_moved, t):
+    return bytes_moved / t
+
+
+def row(name, t, bytes_moved, baseline_t, err):
+    bw = _bw(bytes_moved, t)
+    print(f"{name:>22} {t*1e6:>9.1f} {bw/1e9:>7.0f} {100*bw/PEAK_BW_BYTES:>5.0f}% "
+          f"{baseline_t/t:>7.2f}x {err:>9.1e}")
+
+
+def main():
+    print(f"{'kernel / impl':>22} {'us':>9} {'GB/s':>7} {'%pk':>6} {'speedup':>8} {'err':>9}")
     print("-" * 70)
-    for rows, D in shapes:
-        mx.random.seed(0)
-        x = mx.random.normal((rows, D))
-        w = mx.random.normal((D,))
-        mx.eval(x, w)
 
-        ref = rmsnorm_ref(x, w, eps)
-        ours = rmsnorm_metal(x, w, eps)
-        fused = mx.fast.rms_norm(x, w, eps)
-        mx.eval(ref, ours, fused)
-        err_ours = mx.max(mx.abs(ours - ref)).item()
-        err_fused = mx.max(mx.abs(fused - ref)).item()
+    # ---- RMSNorm: naive multi-op vs ours vs builtin ----
+    mx.random.seed(0)
+    x = mx.random.normal((32768, 2048)); w = mx.random.normal((2048,)); mx.eval(x, w)
+    b = (2 * x.size + w.size) * 4
+    ref = rmsnorm_ref(x, w); ours = rmsnorm_metal(x, w); mx.eval(ref, ours)
+    e = mx.max(mx.abs(ours - ref)).item()
+    tn = timeit(lambda: rmsnorm_ref(x, w))
+    row("rmsnorm naive", tn, b, tn, 0.0)
+    row("rmsnorm ours", timeit(lambda: rmsnorm_metal(x, w)), b, tn, e)
+    row("rmsnorm builtin", timeit(lambda: mx.fast.rms_norm(x, w, 1e-5)), b, tn,
+        mx.max(mx.abs(mx.fast.rms_norm(x, w, 1e-5) - ref)).item())
+    print()
 
-        # bytes: read x + write out + read w (fp32)
-        bytes_moved = (2 * rows * D + D) * 4
+    # ---- Softmax: ours vs builtin (mx.softmax is already fused) ----
+    x = mx.random.normal((32768, 2048)); mx.eval(x)
+    b = 2 * x.size * 4
+    ref = mx.softmax(x, axis=-1); ours = softmax_metal(x); mx.eval(ref, ours)
+    e = mx.max(mx.abs(ours - ref)).item()
+    tb = timeit(lambda: mx.softmax(x, axis=-1))
+    row("softmax builtin", tb, b, tb, 0.0)
+    row("softmax ours", timeit(lambda: softmax_metal(x)), b, tb, e)
+    print()
 
-        t_naive = timeit(lambda: rmsnorm_ref(x, w, eps))
-        t_ours = timeit(lambda: rmsnorm_metal(x, w, eps))
-        t_fused = timeit(lambda: mx.fast.rms_norm(x, w, eps))
+    # ---- SwiGLU: naive multi-op vs ours ----
+    g = mx.random.normal((32768, 2048)); u = mx.random.normal((32768, 2048)); mx.eval(g, u)
+    b = 3 * g.size * 4  # read gate + read up + write out
+    ref = nn.silu(g) * u; ours = swiglu_metal(g, u); mx.eval(ref, ours)
+    e = mx.max(mx.abs(ours - ref)).item()
+    tn = timeit(lambda: nn.silu(g) * u)
+    row("swiglu naive", tn, b, tn, 0.0)
+    row("swiglu ours", timeit(lambda: swiglu_metal(g, u)), b, tn, e)
+    print()
 
-        def line(tag, t, err):
-            bw = bytes_moved / t
-            print(f"{f'{rows}x{D}':>14} {tag:>7} {t*1e6:>9.1f} {bw/1e9:>7.0f} "
-                  f"{100*bw/PEAK_BW_BYTES:>5.0f}% {t_naive/t:>7.2f}x {err:>9.1e}")
-
-        line("naive", t_naive, 0.0)
-        line("ours", t_ours, err_ours)
-        line("fused", t_fused, err_fused)
-        print()
+    # ---- GEMV: ours vs mx matmul (the decode bottleneck) ----
+    W = mx.random.normal((8192, 8192)); xv = mx.random.normal((8192,)); mx.eval(W, xv)
+    b = (W.size + xv.size + W.shape[0]) * 4  # W dominates
+    ref = W @ xv; ours = gemv_metal(W, xv); mx.eval(ref, ours)
+    e = mx.max(mx.abs(ours - ref)).item()
+    tm = timeit(lambda: W @ xv)
+    row("gemv mx-matmul", tm, b, tm, 0.0)
+    row("gemv ours", timeit(lambda: gemv_metal(W, xv)), b, tm, e)
 
 
 if __name__ == "__main__":
-    bench_rmsnorm()
+    main()
