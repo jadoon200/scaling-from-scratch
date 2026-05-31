@@ -104,6 +104,20 @@ def main():
     es = mx.max(mx.abs(
         mx.fast.scaled_dot_product_attention(qb, Kb, Vb, scale=sc).reshape(R, D) - ref)).item()
     row("attention sdpa", ts, b, tn, es)
+    print()
+
+    # ---- Quantized GEMV: read packed INT8/INT4 weights in the kernel ----
+    # (fuses project #2 quantization with project #3 kernels: the decode speedup
+    #  comes from reading fewer weight bytes, done correctly inside the kernel)
+    from kernels.qgemv import quantize_weight, qgemv_metal
+    Wq = mx.random.normal((8192, 8192)); xq = mx.random.normal((8192,)); mx.eval(Wq, xq)
+    M, K, G = 8192, 8192, 64
+    tf = timeit(lambda: Wq @ xq)
+    row("gemv fp32 (read 256MB)", tf, Wq.size * 4, tf, 0.0)
+    for bits in (8, 4):
+        c, s, z = quantize_weight(Wq, bits, G); mx.eval(c, s, z)
+        tq = timeit(lambda: qgemv_metal(c, s, z, xq, bits, G, M, K))
+        row(f"gemv INT{bits} (read {c.nbytes//10**6}MB)", tq, c.nbytes, tf, 0.0)
 
 
 if __name__ == "__main__":

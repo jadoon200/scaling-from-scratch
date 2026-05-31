@@ -43,6 +43,26 @@ Two standouts:
   memory and never writes it to global memory. That is the Flash Attention insight,
   hand-written.
 
+## Capstone: quantized GEMV (projects #2 + #3 fused)
+
+Decode reads the whole weight matrix per token, so quantizing the weights should
+speed it up — but only if the kernel reads the *packed* weights directly.
+(Project #2 showed dequantize-then-matmul is ~9× *slower* because it expands the
+weight to float first.) `qgemv.py` unpacks and dequantizes each weight inline,
+never materializing the fp matrix:
+
+![qgemv](report/figures/qgemv.png)
+
+| weights | read | decode speedup |
+|---|---|---|
+| fp32 | 268 MB | 1.0× |
+| INT8 | 67 MB | **2.6×** |
+| INT4 | 34 MB | **2.4×** |
+
+The result project #2 predicted, now realized as a kernel. Note INT4 reads half
+of INT8 yet runs slightly slower — the nibble-unpacking compute offsets the
+bandwidth saving at this size; "fewer bytes" only helps while you're memory-bound.
+
 ## Layout
 
 ```
@@ -52,6 +72,7 @@ kernels/
   swiglu.py      fused silu(gate)*up (elementwise)
   gemv.py        batch=1 matrix-vector (the decode bottleneck)
   attention.py   flash-style fused decode attention (scores stay on-chip)
+  qgemv.py       quantized GEMV: reads packed INT8/INT4 weights in-kernel
 config.py        chip peak specs
 bench.py         correctness + speedup + achieved bandwidth, all kernels
 report.py        figures + RESULTS.md

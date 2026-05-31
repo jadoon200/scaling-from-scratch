@@ -100,7 +100,41 @@ def fig_bandwidth(data):
     print(f"  saved {FIG}/bandwidth_all.png")
 
 
-def write_report(data):
+def measure_qgemv():
+    from kernels.qgemv import quantize_weight, qgemv_metal
+    mx.random.seed(0)
+    M, K, G = 8192, 8192, 64
+    W = mx.random.normal((M, K)); x = mx.random.normal((K,)); mx.eval(W, x)
+    tf = timeit(lambda: W @ x)
+    rows = [("fp32", tf, W.size * 4)]
+    for bits in (8, 4):
+        c, s, z = quantize_weight(W, bits, G); mx.eval(c, s, z)
+        tq = timeit(lambda: qgemv_metal(c, s, z, x, bits, G, M, K))
+        rows.append((f"INT{bits}", tq, c.nbytes))
+    return rows
+
+
+def fig_qgemv(rows):
+    base = rows[0][1]
+    labels = [r[0] for r in rows]
+    spd = [base / r[1] for r in rows]
+    mb = [r[2] / 1e6 for r in rows]
+    fig, ax = plt.subplots(figsize=(6.5, 4.4))
+    bars = ax.bar(labels, spd, color=["#888888", "#4f81bd", "#9bbb59"])
+    for i, (sp, m) in enumerate(zip(spd, mb)):
+        ax.text(i, sp, f"{sp:.2f}×\n{m:.0f} MB", ha="center", va="bottom", fontsize=9)
+    ax.set_ylabel("decode speedup over fp32")
+    ax.set_title("Quantized GEMV: reading packed weights in-kernel\n"
+                 "(projects #2 + #3 fused)", fontsize=10)
+    ax.set_ylim(0, max(spd) * 1.25)
+    fig.tight_layout()
+    os.makedirs(FIG, exist_ok=True)
+    fig.savefig(os.path.join(FIG, "qgemv.png"), bbox_inches="tight")
+    plt.close(fig)
+    print(f"  saved {FIG}/qgemv.png")
+
+
+def write_report(data, qrows=None):
     os.makedirs("report", exist_ok=True)
     L = ["# MLX Custom Metal Kernels — Results\n",
          "Four hand-written Metal GPU kernels via `mx.fast.metal_kernel`, "
@@ -126,7 +160,26 @@ def write_report(data):
           "less overhead than a general matmul.",
           "- Correctness is ~1e-6 (fp32) for the elementwise/reduction kernels "
           "and ~1e-4 for GEMV (4096–8192-wide fp32 dot products).\n",
-          "## Reproduce\n",
+          ]
+    if qrows:
+        base = qrows[0][1]
+        L += ["## Quantized GEMV — projects #2 + #3 fused\n",
+              "Decode is bound by reading the weight matrix. Quantizing the "
+              "weights shrinks that read — but only if the matmul reads the "
+              "*packed* weights directly (project #2 showed dequantize-then-matmul "
+              "is ~9× slower). This kernel unpacks and dequantizes each weight "
+              "inline, never materializing the fp matrix.\n",
+              "![qgemv](figures/qgemv.png)\n",
+              "| weights | read | decode speedup |", "|---|---|---|"]
+        for tag, t, b in qrows:
+            L.append(f"| {tag} | {b/1e6:.0f} MB | {base/t:.2f}× |")
+        L += ["",
+              "INT8 gives **2.6×** and INT4 **2.4×** faster decode than fp32. "
+              "INT4 reads half the bytes of INT8 yet is slightly slower — the "
+              "nibble-unpacking compute offsets the bandwidth saving at this size, "
+              "a nice reminder that 'fewer bytes' only helps while you stay "
+              "memory-bound.\n"]
+    L += ["## Reproduce\n",
           "```bash\nconda activate mlx-transformer\npython bench.py\n"
           "python report.py\n```\n"]
     open("report/RESULTS.md", "w").write("\n".join(L))
@@ -137,7 +190,9 @@ def main():
     print("measuring all kernels...")
     data = measure()
     fig_bandwidth(data)
-    write_report(data)
+    qrows = measure_qgemv()
+    fig_qgemv(qrows)
+    write_report(data, qrows)
 
 
 if __name__ == "__main__":
