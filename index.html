@@ -39,14 +39,17 @@
      background:linear-gradient(120deg,#fff,#9fb3c8);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
   .lede{color:var(--mut);font-size:1.12rem;max-width:680px;margin:0 auto 26px}
   .arc{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:8px}
-  .arc span{background:var(--card);border:1px solid var(--line);border-radius:999px;
-    padding:7px 16px;font-size:.85rem;color:var(--mut)}
+  .arc a{background:var(--card);border:1px solid var(--line);border-radius:999px;
+    padding:7px 16px;font-size:.85rem;color:var(--mut);cursor:pointer;
+    transition:border-color .15s,color .15s,transform .15s;text-decoration:none}
+  .arc a:hover{border-color:var(--accent);color:var(--txt);transform:translateY(-2px);text-decoration:none}
   .arc b{color:var(--txt)}
 
   /* sections */
   section{padding:64px 0;border-top:1px solid var(--line)}
   .tag{display:inline-block;font-size:.72rem;font-weight:700;letter-spacing:.12em;
-    text-transform:uppercase;padding:4px 10px;border-radius:6px;margin-bottom:14px}
+    text-transform:uppercase;padding:4px 10px;border-radius:6px;margin-bottom:14px;
+    scroll-margin-top:40px}
   .t1{background:rgba(94,234,212,.12);color:var(--p1)}
   .t2{background:rgba(167,139,250,.12);color:var(--p2)}
   .t3{background:rgba(240,136,62,.12);color:var(--p3)}
@@ -82,11 +85,19 @@
   .gridcol{display:grid;grid-template-columns:1fr 1fr;gap:22px}
   @media(max-width:720px){.gridcol{grid-template-columns:1fr}}
 
-  footer{border-top:1px solid var(--line);padding:44px 0 70px;color:var(--mut);font-size:.9rem}
-  .repos{display:flex;gap:12px;flex-wrap:wrap;margin:18px 0}
-  .repos a{background:var(--card);border:1px solid var(--line);border-radius:10px;
-    padding:12px 16px;color:var(--txt);font-size:.9rem}
-  .repos a span{color:var(--mut);display:block;font-size:.78rem;margin-top:2px}
+  footer{border-top:1px solid var(--line);padding:64px 0 84px;color:var(--mut);
+    font-size:.9rem;text-align:center;
+    background:radial-gradient(720px 320px at 50% 130%,rgba(167,139,250,.08),transparent 70%)}
+  .foot-h{color:var(--txt);font-size:1.35rem;font-weight:650;margin-bottom:8px}
+  .foot-lede{color:var(--mut);max-width:560px;margin:0 auto}
+  .repos{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;margin:26px 0 18px}
+  .repos a{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:15px 20px;color:var(--txt);font-size:.92rem;font-weight:600;text-align:left;
+    min-width:190px;transition:border-color .15s,transform .15s,box-shadow .15s}
+  .repos a:hover{border-color:var(--accent);transform:translateY(-3px);text-decoration:none;
+    box-shadow:0 8px 24px rgba(0,0,0,.25)}
+  .repos a span{color:var(--mut);display:block;font-size:.78rem;margin-top:3px;font-weight:400}
+  .foot-meta{margin-top:10px;font-size:.84rem}
 </style>
 </head>
 <body>
@@ -97,9 +108,9 @@
     <h1>Scaling from Scratch</h1>
     <p class="lede">Three ML-systems projects built from first principles in Apple MLX — not to make a model that works, but to understand <b>where the hardware time actually goes</b>: FLOPs, memory bandwidth, scaling laws, and the GPU kernels themselves.</p>
     <div class="arc">
-      <span>① <b>Transformer</b> + scaling laws</span>
-      <span>② <b>Quantization</b> efficiency</span>
-      <span>③ <b>Metal kernels</b> at the roofline</span>
+      <a href="#p1">① <b>Transformer</b> + scaling laws</a>
+      <a href="#p2">② <b>Quantization</b> efficiency</a>
+      <a href="#p3">③ <b>Metal kernels</b> at the roofline</a>
     </div>
   </div>
 </header>
@@ -117,7 +128,7 @@
 <!-- PROJECT 1 -->
 <section>
   <div class="wrap">
-    <span class="tag t1">Project 01 — mlx-tiny-transformer</span>
+    <span class="tag t1" id="p1">Project 01 — mlx-tiny-transformer</span>
     <h2>A transformer, and its scaling law</h2>
     <p class="sub">A LLaMA-style decoder (RoPE · RMSNorm · SwiGLU · GQA · KV-cache), trained on FineWeb-Edu, then swept to fit the Chinchilla law empirically.</p>
 
@@ -160,7 +171,7 @@
 <!-- PROJECT 2 -->
 <section>
   <div class="wrap">
-    <span class="tag t2">Project 02 — mlx-quantization</span>
+    <span class="tag t2" id="p2">Project 02 — mlx-quantization</span>
     <h2>Quantization: where the speed actually comes from</h2>
     <p class="sub">From-scratch group-wise INT8/INT4 weight quantization, benchmarked on the quality ↔ speed ↔ memory tradeoff.</p>
 
@@ -196,7 +207,7 @@
 <!-- PROJECT 3 -->
 <section>
   <div class="wrap">
-    <span class="tag t3">Project 03 — mlx-metal-kernels</span>
+    <span class="tag t3" id="p3">Project 03 — mlx-metal-kernels</span>
     <h2>Hand-written Metal kernels at the bandwidth roof</h2>
     <p class="sub">Six custom GPU kernels via <code>mx.fast.metal_kernel</code>, benchmarked against MLX's naive paths and its hand-optimized builtins.</p>
 
@@ -231,14 +242,14 @@
 
 <footer>
   <div class="wrap">
-    <p style="color:var(--txt);font-size:1rem;margin-bottom:4px">Built with Apple MLX on an M3 Pro (18 GB unified memory).</p>
-    <p class="note">No PyTorch, no JAX, no CUDA. Every component — attention, quantization, GPU kernels — written from scratch to understand the mechanics that matter at scale.</p>
+    <div class="foot-h">Browse the code →</div>
+    <p class="foot-lede">Three independent branches — each with its own README, figures, and tests. Built from scratch in Apple MLX: no PyTorch, no JAX, no CUDA.</p>
     <div class="repos">
       <a href="https://github.com/jadoon200/scaling-from-scratch/tree/mlx-tiny-transformer">① mlx-tiny-transformer<span>transformer + scaling laws</span></a>
       <a href="https://github.com/jadoon200/scaling-from-scratch/tree/mlx-quantization">② mlx-quantization<span>INT8/INT4 + the kernel lesson</span></a>
       <a href="https://github.com/jadoon200/scaling-from-scratch/tree/mlx-metal-kernels">③ mlx-metal-kernels<span>6 custom Metal kernels</span></a>
     </div>
-    <p class="note">Learning path: <a href="https://vladfeinberg.com/2026/05/10/how-to-land-a-job-at-a-frontier-lab.html">How to Land a Job at a Frontier Lab</a> · framing: <a href="https://jax-ml.github.io/scaling-book/">How to Scale Your Model</a></p>
+    <p class="foot-meta note">Apple M3 Pro · 18 GB unified memory &nbsp;·&nbsp; reading: <a href="https://vladfeinberg.com/2026/05/10/how-to-land-a-job-at-a-frontier-lab.html">the frontier-lab path</a> &amp; <a href="https://jax-ml.github.io/scaling-book/">How to Scale Your Model</a></p>
   </div>
 </footer>
 
