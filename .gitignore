@@ -1,0 +1,18 @@
+# Claude config (local-only)
+.claude/
+CLAUDE.md
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Artifacts
+data/
+*.npy
+*.bin
+*.safetensors
