@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scaling from Scratch — ML Systems in Apple MLX</title>
+<meta name="description" content="Three from-scratch ML-systems projects in Apple MLX on an M3 Pro: a transformer + scaling laws, weight quantization, and custom Metal GPU kernels hitting 85% of peak bandwidth.">
+
+<!-- Open Graph / LinkedIn preview -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="Scaling from Scratch — ML Systems in Apple MLX">
+<meta property="og:description" content="A transformer + Chinchilla scaling laws, INT4 quantization, and hand-written Metal kernels that match/beat MLX's builtins — all from scratch on an M3 Pro.">
+<meta property="og:image" content="https://jadoon200.github.io/scaling-from-scratch/assets/og.png">
+<meta property="og:url" content="https://jadoon200.github.io/scaling-from-scratch/">
+<meta name="twitter:card" content="summary_large_image">
+
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+<style>
+  :root{
+    --bg:#0a0e14; --bg2:#0f1520; --card:#141b27; --line:#1f2937;
+    --txt:#e6edf3; --mut:#8b98a9; --accent:#5eead4; --accent2:#a78bfa;
+    --p1:#5eead4; --p2:#a78bfa; --p3:#f0883e;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+    line-height:1.6;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:960px;margin:0 auto;padding:0 24px}
+  code,.mono{font-family:"SF Mono",ui-monospace,Menlo,monospace}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  /* hero */
+  header{padding:90px 0 60px;text-align:center;
+    background:radial-gradient(900px 400px at 50% -10%,rgba(94,234,212,.10),transparent 70%)}
+  .eyebrow{color:var(--accent);font-size:.8rem;letter-spacing:.22em;text-transform:uppercase;font-weight:600}
+  h1{font-size:clamp(2.1rem,5vw,3.4rem);line-height:1.1;margin:16px 0;color:#fff;
+     background:linear-gradient(120deg,#fff,#9fb3c8);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .lede{color:var(--mut);font-size:1.12rem;max-width:680px;margin:0 auto 26px}
+  .arc{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:8px}
+  .arc span{background:var(--card);border:1px solid var(--line);border-radius:999px;
+    padding:7px 16px;font-size:.85rem;color:var(--mut)}
+  .arc b{color:var(--txt)}
+
+  /* sections */
+  section{padding:64px 0;border-top:1px solid var(--line)}
+  .tag{display:inline-block;font-size:.72rem;font-weight:700;letter-spacing:.12em;
+    text-transform:uppercase;padding:4px 10px;border-radius:6px;margin-bottom:14px}
+  .t1{background:rgba(94,234,212,.12);color:var(--p1)}
+  .t2{background:rgba(167,139,250,.12);color:var(--p2)}
+  .t3{background:rgba(240,136,62,.12);color:var(--p3)}
+  h2{font-size:1.9rem;margin-bottom:6px}
+  .sub{color:var(--mut);margin-bottom:28px;font-size:1.02rem}
+  p{color:#c4d0de;margin:14px 0}
+  .note{color:var(--mut);font-size:.92rem}
+
+  /* metric cards */
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:24px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px}
+  .card .n{font-size:1.7rem;font-weight:700;font-family:"SF Mono",ui-monospace,monospace}
+  .card .l{color:var(--mut);font-size:.82rem;margin-top:4px}
+  .chart{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:22px 0;min-height:300px}
+
+  .samples{background:var(--bg2);border:1px solid var(--line);border-left:3px solid var(--p1);
+    border-radius:8px;padding:16px 18px;margin:18px 0;font-size:.95rem;color:#aebccd}
+  .samples p{margin:10px 0;color:#aebccd}
+  .gridcol{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  @media(max-width:720px){.gridcol{grid-template-columns:1fr}}
+
+  footer{border-top:1px solid var(--line);padding:44px 0 70px;color:var(--mut);font-size:.9rem}
+  .repos{display:flex;gap:12px;flex-wrap:wrap;margin:18px 0}
+  .repos a{background:var(--card);border:1px solid var(--line);border-radius:10px;
+    padding:12px 16px;color:var(--txt);font-size:.9rem}
+  .repos a span{color:var(--mut);display:block;font-size:.78rem;margin-top:2px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="eyebrow">Apple MLX · M3 Pro · from scratch</div>
+    <h1>Scaling from Scratch</h1>
+    <p class="lede">Three ML-systems projects built from first principles in Apple MLX — not to make a model that works, but to understand <b>where the hardware time actually goes</b>: FLOPs, memory bandwidth, scaling laws, and the GPU kernels themselves.</p>
+    <div class="arc">
+      <span>① <b>Transformer</b> + scaling laws</span>
+      <span>② <b>Quantization</b> efficiency</span>
+      <span>③ <b>Metal kernels</b> at the roofline</span>
+    </div>
+  </div>
+</header>
+
+<!-- PROJECT 1 -->
+<section>
+  <div class="wrap">
+    <span class="tag t1">Project 01 — mlx-tiny-transformer</span>
+    <h2>A transformer, and its scaling law</h2>
+    <p class="sub">A LLaMA-style decoder (RoPE · RMSNorm · SwiGLU · GQA · KV-cache), trained on FineWeb-Edu, then swept to fit the Chinchilla law empirically.</p>
+
+    <div class="cards">
+      <div class="card"><div class="n" style="color:var(--p1)">9</div><div class="l">(N, D) runs swept</div></div>
+      <div class="card"><div class="n" style="color:var(--p1)">0.075</div><div class="l">Chinchilla fit RMSE (nats)</div></div>
+      <div class="card"><div class="n" style="color:var(--p1)">5.32</div><div class="l">converged val loss (ppl 205)</div></div>
+      <div class="card"><div class="n" style="color:var(--p1)">31%</div><div class="l">MFU (10M model)</div></div>
+    </div>
+
+    <p>Loss falls cleanly with compute, and each model size traces its own curve. Note the <b>crossover</b>: at low compute the smaller model wins — a bigger model only pays off once it has enough data.</p>
+    <div class="chart" id="c_scaling"></div>
+
+    <div class="gridcol">
+      <div>
+        <p>At small scale the token-embedding table <b>dominates</b> the parameter budget (85% at 1M → 25% at 100M), which is exactly why these models are memory-bound. Scaling laws therefore track <i>non-embedding</i> params.</p>
+        <div class="chart" id="c_params"></div>
+      </div>
+      <div>
+        <p>The converged 10M model produces real, grammatical English (top-p decode through the KV cache):</p>
+        <div class="samples">
+          <p>“Scientists have discovered that the majority of the global climate, though many of them have been developed in recent years…”</p>
+          <p>“The history of the three noble is a poor and good had a most attractive and vast life-based property…”</p>
+        </div>
+        <p class="note">Locally coherent rather than globally — expected for a 10M model on a 45M-token slice — but real text, not noise.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PROJECT 2 -->
+<section>
+  <div class="wrap">
+    <span class="tag t2">Project 02 — mlx-quantization</span>
+    <h2>Quantization: where the speed actually comes from</h2>
+    <p class="sub">From-scratch group-wise INT8/INT4 weight quantization, benchmarked on the quality ↔ speed ↔ memory tradeoff.</p>
+
+    <p>The lesson in one chart. At batch=1 decode the bottleneck is reading weights from memory. But a <b>naive dequantize-then-matmul is ~9× slower</b> than fp16 — it expands the weight back to float first. Only a <b>fused kernel</b> that reads packed weights directly wins (1.9× / 2.9×). <i>Speed comes from the kernel, not the data format.</i></p>
+    <div class="chart" id="c_latency"></div>
+
+    <div class="gridcol">
+      <div>
+        <p>And the quality cost is almost nothing — perplexity is flat across precisions thanks to group-wise scales, so the Pareto-optimal pick is <b>INT4 with a large group</b>: smallest, no measurable loss.</p>
+        <div class="chart" id="c_pareto"></div>
+      </div>
+      <div>
+        <div class="cards" style="grid-template-columns:1fr 1fr">
+          <div class="card"><div class="n" style="color:var(--p2)">2.9×</div><div class="l">INT4 decode speedup (fused)</div></div>
+          <div class="card"><div class="n" style="color:var(--p2)">+0.05%</div><div class="l">INT4 perplexity cost</div></div>
+          <div class="card"><div class="n" style="color:var(--p2)">1.55×</div><div class="l">smaller (103→66 MB)</div></div>
+          <div class="card"><div class="n" style="color:var(--p2)">~0.5%</div><div class="l">INT8 weight error</div></div>
+        </div>
+        <p class="note">From-scratch <code>QuantizedLinear</code> matches MLX's native fused kernel to 4 decimals. Memory savings are modest because the fp16 embedding is ~half the model — the same dominance seen in Project 01.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PROJECT 3 -->
+<section>
+  <div class="wrap">
+    <span class="tag t3">Project 03 — mlx-metal-kernels</span>
+    <h2>Hand-written Metal kernels at the bandwidth roof</h2>
+    <p class="sub">Six custom GPU kernels via <code>mx.fast.metal_kernel</code>, benchmarked against MLX's naive paths and its hand-optimized builtins.</p>
+
+    <p>These ops are memory-bound, so the figure of merit is achieved bandwidth vs the M3 Pro's ~150 GB/s roof. The custom kernels reach <b>77–85% of peak</b> — and two of them <b>beat MLX's own builtins</b>: the GEMV beats <code>mx.matmul</code>, and the flash-style attention beats <code>scaled_dot_product_attention</code> by keeping the score matrix on-chip.</p>
+    <div class="chart" id="c_kernels"></div>
+
+    <div class="gridcol">
+      <div>
+        <p><b>The capstone — fusing Projects 02 + 03.</b> A quantized GEMV that reads packed INT4/INT8 weights <i>directly in the kernel</i>, dequantizing inline. This is the kernel Project 02 proved you need: <b>2.6× (INT8) / 2.4× (INT4)</b> faster decode than fp32.</p>
+        <div class="chart" id="c_qgemv"></div>
+      </div>
+      <div>
+        <div class="cards" style="grid-template-columns:1fr 1fr">
+          <div class="card"><div class="n" style="color:var(--p3)">85%</div><div class="l">peak BW (RMSNorm)</div></div>
+          <div class="card"><div class="n" style="color:var(--p3)">2.8×</div><div class="l">attention vs naive</div></div>
+          <div class="card"><div class="n" style="color:var(--p3)">6</div><div class="l">custom kernels, all verified</div></div>
+          <div class="card"><div class="n" style="color:var(--p3)">~1e-6</div><div class="l">correctness vs reference</div></div>
+        </div>
+        <p class="note">INT4 reads half the bytes of INT8 yet runs slightly slower — the nibble-unpacking compute offsets the bandwidth saving. "Fewer bytes" only helps while you stay memory-bound.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p style="color:var(--txt);font-size:1rem;margin-bottom:4px">Built with Apple MLX on an M3 Pro (18 GB unified memory).</p>
+    <p class="note">No PyTorch, no JAX, no CUDA. Every component — attention, quantization, GPU kernels — written from scratch to understand the mechanics that matter at scale.</p>
+    <div class="repos">
+      <a href="https://github.com/jadoon200/scaling-from-scratch/tree/mlx-tiny-transformer">① mlx-tiny-transformer<span>transformer + scaling laws</span></a>
+      <a href="https://github.com/jadoon200/scaling-from-scratch/tree/mlx-quantization">② mlx-quantization<span>INT8/INT4 + the kernel lesson</span></a>
+      <a href="https://github.com/jadoon200/scaling-from-scratch/tree/mlx-metal-kernels">③ mlx-metal-kernels<span>6 custom Metal kernels</span></a>
+    </div>
+    <p class="note">Learning path: <a href="https://vladfeinberg.com/2026/05/10/how-to-land-a-job-at-a-frontier-lab.html">How to Land a Job at a Frontier Lab</a> · framing: <a href="https://jax-ml.github.io/scaling-book/">How to Scale Your Model</a></p>
+  </div>
+</footer>
+
+<script>
+const DARK={paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',
+  font:{color:'#c4d0de',family:'-apple-system,Segoe UI,sans-serif'},
+  margin:{l:56,r:18,t:30,b:48},
+  xaxis:{gridcolor:'#1f2937',zerolinecolor:'#1f2937'},
+  yaxis:{gridcolor:'#1f2937',zerolinecolor:'#1f2937'},
+  legend:{bgcolor:'rgba(0,0,0,0)'}};
+const CFG={responsive:true,displayModeBar:false};
+const P1='#5eead4',P2='#a78bfa',P3='#f0883e',GREY='#8b98a9';
+
+/* 1. scaling: loss vs compute, one curve per model size */
+const Ds=[2e6,6e6,18e6];
+const series=[
+ {n:'N=1.8M',N:1.77e6,loss:[7.032,6.461,5.931],c:P1},
+ {n:'N=6.0M',N:5.97e6,loss:[7.118,6.434,5.776],c:'#38bdf8'},
+ {n:'N=19.5M',N:19.5e6,loss:[6.994,6.267,5.523],c:P2}];
+Plotly.newPlot('c_scaling',series.map(s=>({
+  x:Ds.map(d=>6*s.N*d),y:s.loss,name:s.n,mode:'lines+markers',
+  line:{color:s.c,width:2},marker:{size:9,color:s.c}})),
+  Object.assign({},DARK,{title:{text:'Validation loss vs training compute (6ND)',font:{size:13}},
+   xaxis:{type:'log',title:'compute C = 6ND (FLOPs)',gridcolor:'#1f2937'},
+   yaxis:{title:'val loss (nats)',gridcolor:'#1f2937'}}),CFG);
+
+/* 2. param breakdown */
+const pn=['1M','3M','10M','30M','100M'],emb=[9.66,14.49,22.53,32.2,45.07],ne=[1.77,5.97,19.5,49.56,136.48];
+Plotly.newPlot('c_params',[
+ {x:pn,y:emb,name:'embedding',type:'bar',marker:{color:'#3b3357'}},
+ {x:pn,y:ne,name:'transformer',type:'bar',marker:{color:P2}}],
+ Object.assign({},DARK,{barmode:'stack',title:{text:'Params: embedding vs transformer (M)',font:{size:13}},
+  yaxis:{title:'params (M)',gridcolor:'#1f2937'}}),CFG);
+
+/* 3. quant decode latency */
+Plotly.newPlot('c_latency',[{
+  x:['fp16','ours INT8','native INT8','ours INT4','native INT4'],
+  y:[0.485,3.66,0.258,3.67,0.169],type:'bar',
+  marker:{color:[GREY,'#c0504d',P2,'#c0504d',P2]},
+  text:['1.0×','0.13×','1.9×','0.13×','2.9×'],textposition:'outside',textfont:{color:'#c4d0de'}}],
+  Object.assign({},DARK,{title:{text:'Decode latency, 4096×4096 matmul (lower = faster)',font:{size:13}},
+   yaxis:{title:'ms per step (batch=1)',gridcolor:'#1f2937'}}),CFG);
+
+/* 4. quant pareto */
+const par=[['fp16',102.9,790.81,GREY],['INT8 g32',80.4,790.81,P2],['INT8 g64',78.8,790.82,P2],
+ ['INT8 g128',78.0,790.80,P2],['INT4 g32',67.6,791.16,'#f0883e'],['INT4 g64',66.0,791.16,'#f0883e'],
+ ['INT4 g128',65.2,791.16,'#f0883e']];
+Plotly.newPlot('c_pareto',[{
+  x:par.map(p=>p[1]),y:par.map(p=>p[2]),text:par.map(p=>p[0]),mode:'markers',
+  marker:{size:13,color:par.map(p=>p[3])},textposition:'top center',type:'scatter'}],
+  Object.assign({},DARK,{title:{text:'Quality vs storage (smaller ←, lower ↓ better)',font:{size:13}},
+   xaxis:{title:'model storage (MB)',autorange:'reversed',gridcolor:'#1f2937'},
+   yaxis:{title:'perplexity',gridcolor:'#1f2937'}}),CFG);
+
+/* 5. kernel bandwidth: ours vs MLX baseline */
+const kn=['RMSNorm','Softmax','SwiGLU','GEMV','Attention'],kours=[85,84,77,83,81],kbase=[26,85,54,82,29];
+Plotly.newPlot('c_kernels',[
+ {x:kn,y:kbase,name:'MLX baseline',type:'bar',marker:{color:GREY}},
+ {x:kn,y:kours,name:'ours (custom Metal)',type:'bar',marker:{color:P3}}],
+ Object.assign({},DARK,{barmode:'group',title:{text:'% of peak memory bandwidth (150 GB/s roof)',font:{size:13}},
+  yaxis:{title:'% of peak BW',range:[0,100],gridcolor:'#1f2937'}}),CFG);
+
+/* 6. quantized gemv speedup */
+Plotly.newPlot('c_qgemv',[{
+  x:['fp32 · 268MB','INT8 · 67MB','INT4 · 33MB'],y:[1.0,2.6,2.4],type:'bar',
+  marker:{color:[GREY,P2,P3]},text:['1.0×','2.6×','2.4×'],textposition:'outside',textfont:{color:'#c4d0de'}}],
+  Object.assign({},DARK,{title:{text:'Quantized GEMV: decode speedup (weights read in-kernel)',font:{size:13}},
+   yaxis:{title:'speedup over fp32',range:[0,3.2],gridcolor:'#1f2937'}}),CFG);
+</script>
+</body>
+</html>
