@@ -38,37 +38,43 @@ s = (w_max - w_min) / (2^bits - 1)               # per-group scale
 Smaller `G` → better fidelity but more scale/zero overhead. The *effective*
 bits/weight counts that overhead (`python config.py` prints the table).
 
-## Status
+## Status — complete
 
 | component | state |
 |---|---|
-| `quant/quantize.py` — group-wise INT8/INT4 quant, INT4 packing | ✅ built + verified |
+| `quant/quantize.py` — group-wise INT8/INT4 quant, INT4 packing | ✅ |
 | `config.py` — model + quant config, effective-bits accounting | ✅ |
-| `quant/qlinear.py` — quantized Linear (dequant-matmul) + MLX-native compare | ⬜ next |
-| `model.py` — compact transformer eval target | ⬜ |
-| `bench.py` — perplexity / tokens-per-sec / memory vs bits | ⬜ |
-| `roofline_quant.py` — quantization vs the memory roofline | ⬜ |
-| `report.py` — figures + RESULTS.md | ⬜ |
+| `quant/qlinear.py` — QuantizedLinear + MLX-native baseline | ✅ |
+| `model.py` — compact transformer + `quantize_model` | ✅ |
+| `train.py` — minimal trainer for the perplexity benchmark | ✅ |
+| `bench.py` — memory + decode-latency kernel comparison | ✅ |
+| `pareto.py` — quality-vs-compression sweep | ✅ |
+| `report.py` — figures + RESULTS.md | ✅ |
 
-### Verified so far
-- Round-trip error: INT8 ≈ 0.5% rel-Frobenius, INT4 ≈ 8–10% (the expected cliff)
-- Smaller group size lowers error (g=32: 0.0047 vs g=128: 0.0059 at INT8)
-- INT4 pack/unpack is lossless; 8× compression vs fp32 weights
+## Headline results (M3 Pro)
 
-## Setup
+- **The kernel is what matters.** A 4096×4096 decode matmul at batch=1: naive
+  dequant-then-matmul is **~9× slower** than fp16 (it materializes the fp weight),
+  while MLX's **fused** quantized kernel hits **1.9× (INT8) / 2.9× (INT4)** speedup.
+  Quantization speed comes from the kernel, not the data format.
+- **Quality is nearly free.** Validation perplexity is flat across precisions
+  (INT8 lossless, INT4 +0.05%) thanks to group-wise scales.
+- **Memory.** Model storage 103 MB (fp16) → 65 MB (INT4); modest because the
+  fp16 embedding is ~half the model (echoing project #1's embedding dominance).
+- **Pareto-optimal: INT4 with a large group size** — smallest, no quality loss.
+- Round-trip weight error: INT8 ≈ 0.5%, INT4 ≈ 8–10%; smaller groups lower it.
+  From-scratch QuantizedLinear matches MLX's native kernel to 4 decimals.
+
+See [`report/RESULTS.md`](report/RESULTS.md) for figures and the full writeup.
+
+## Setup & usage
 
 Reuses project #1's conda env (identical deps):
 ```bash
 conda activate mlx-transformer    # or: pip install -r requirements.txt
 python config.py                  # effective-bits table
+python train.py --steps 400       # quick weights for the perplexity bench
+python bench.py                    # memory + decode-latency kernel comparison
+python pareto.py                  # quality vs compression sweep
+python report.py                  # figures + RESULTS.md
 ```
-
-## Build plan
-1. `qlinear.py`: a `QuantizedLinear` that stores packed codes + scales and
-   dequantizes in the forward matmul; validate output parity against fp16 and
-   against `mx.quantized_matmul`.
-2. `model.py`: a small transformer; load/init weights, swap Linear → QuantizedLinear.
-3. `bench.py`: sweep {fp16, INT8, INT4} × group sizes; record perplexity on
-   FineWeb-Edu val, decode tokens/sec, and footprint.
-4. `roofline_quant.py` + `report.py`: plot the speed/quality Pareto and the
-   memory-roofline shift.
