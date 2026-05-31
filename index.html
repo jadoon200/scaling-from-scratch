@@ -62,6 +62,20 @@
   .card .l{color:var(--mut);font-size:.82rem;margin-top:4px}
   .chart{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:22px 0;min-height:300px}
 
+  /* journey timeline */
+  .journey{margin:22px 0;padding-left:22px;border-left:2px solid var(--line)}
+  .step{position:relative;padding:0 0 22px 18px}
+  .step::before{content:"";position:absolute;left:-29px;top:4px;width:12px;height:12px;
+    border-radius:50%;background:var(--bg);border:2px solid var(--mut)}
+  .step.key::before{border-color:var(--accent);background:var(--accent);box-shadow:0 0 0 4px rgba(94,234,212,.15)}
+  .step .h{font-weight:650;color:var(--txt);font-size:.98rem}
+  .step .d{color:var(--mut);font-size:.92rem;margin-top:2px}
+  .step .d em{color:#c4d0de;font-style:normal;border-bottom:1px dashed var(--mut)}
+  .pill{display:inline-block;font-size:.7rem;font-weight:700;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--accent);background:rgba(94,234,212,.1);
+    padding:2px 8px;border-radius:5px;margin-left:6px;vertical-align:middle}
+  .chartcap{color:var(--mut);font-size:.85rem;text-align:center;margin:-6px 0 6px}
+
   .samples{background:var(--bg2);border:1px solid var(--line);border-left:3px solid var(--p1);
     border-radius:8px;padding:16px 18px;margin:18px 0;font-size:.95rem;color:#aebccd}
   .samples p{margin:10px 0;color:#aebccd}
@@ -90,6 +104,16 @@
   </div>
 </header>
 
+<!-- APPROACH -->
+<section>
+  <div class="wrap">
+    <span class="tag t1" style="background:rgba(255,255,255,.06);color:var(--mut)">The approach</span>
+    <h2>Build minimal, measure everything, let the numbers pick what's next</h2>
+    <p class="sub">No PyTorch, no JAX, no CUDA — every component written from scratch in MLX so nothing is a black box.</p>
+    <p>The rule for all three projects: implement the smallest correct version, then <b>instrument it</b> — FLOPs, MFU, bandwidth, error — and let what the measurements reveal decide the next move. That's not just tidy; it's how each project <em>seeded the one after it</em>. The scaling work exposed that small models are memory-bound (the embedding table dominates), which pointed at efficiency. Quantizing the weights then revealed that the speedup lives in the <i>kernel</i>, not the data format — which is exactly why the third project drops down to writing GPU kernels by hand. Below is the actual path, discoveries and dead-ends included, each tied to the chart that settled it.</p>
+  </div>
+</section>
+
 <!-- PROJECT 1 -->
 <section>
   <div class="wrap">
@@ -104,8 +128,17 @@
       <div class="card"><div class="n" style="color:var(--p1)">31%</div><div class="l">MFU (10M model)</div></div>
     </div>
 
-    <p>Loss falls cleanly with compute, and each model size traces its own curve. Note the <b>crossover</b>: at low compute the smaller model wins — a bigger model only pays off once it has enough data.</p>
+    <div class="journey">
+      <div class="step"><div class="h">Built the model explicitly</div><div class="d">RoPE, RMSNorm, SwiGLU, grouped-query attention, KV-cache — no fused QKV, no shortcuts. Sanity check: the analytic parameter count matched the real model to within the norm weights, and the initial loss landed at <em>ln(vocab)</em> as it should.</div></div>
+      <div class="step key"><div class="h">Discovery: the embedding table dominates <span class="pill">turning point</span></div><div class="d">At 1M scale the 50k-token embedding is <em>85% of all parameters</em>. So I renamed every scaling preset by <i>non-embedding</i> params — the quantity Chinchilla actually tracks — and it explained why small models are memory-bound. (See the stacked bars below.)</div></div>
+      <div class="step"><div class="h">Training loop with MFU logging</div><div class="d">Logged model-FLOPs-utilization every step — the headline efficiency metric. It sat at 21–31%, memory-bound at this scale, climbing with model width exactly as the roofline predicts.</div></div>
+      <div class="step key"><div class="h">A dead-end, then a clean sweep <span class="pill">bug found</span></div><div class="d">The first scaling sweep was <em>degenerate</em>: a step cap silently clamped every token budget to the same D, collapsing the fit. I added a loud warning and fixed the budgets, then re-ran nine clean (N, D) points.</div></div>
+      <div class="step"><div class="h">Fit the law, then train to convergence</div><div class="d">Fit <span class="mono">L(N,D)=E+A/Nᵅ+B/Dᵝ</span> (RMSE 0.075), then trained the 10M model 3000 steps to loss 5.32 — enough for real text.</div></div>
+    </div>
+
+    <p>The payoff chart: loss falls cleanly with compute, and each model size traces its own curve. Note the <b>crossover</b> — at low compute the smaller model wins; a bigger model only pays off once it has enough data.</p>
     <div class="chart" id="c_scaling"></div>
+    <p class="chartcap">↑ interactive — hover any point for its exact (compute, loss); the three lines are the fitted curves per model size.</p>
 
     <div class="gridcol">
       <div>
@@ -131,8 +164,16 @@
     <h2>Quantization: where the speed actually comes from</h2>
     <p class="sub">From-scratch group-wise INT8/INT4 weight quantization, benchmarked on the quality ↔ speed ↔ memory tradeoff.</p>
 
-    <p>The lesson in one chart. At batch=1 decode the bottleneck is reading weights from memory. But a <b>naive dequantize-then-matmul is ~9× slower</b> than fp16 — it expands the weight back to float first. Only a <b>fused kernel</b> that reads packed weights directly wins (1.9× / 2.9×). <i>Speed comes from the kernel, not the data format.</i></p>
+    <div class="journey">
+      <div class="step"><div class="h">Quantization from scratch</div><div class="d">Group-wise affine INT8/INT4 with per-group scales, plus INT4 bit-packing (two weights per byte). Verified the round-trip error and that it matched <span class="mono">mx.quantize</span>.</div></div>
+      <div class="step"><div class="h">A QuantizedLinear that matched the vendor kernel</div><div class="d">Output parity with MLX's native fused <span class="mono">QuantizedLinear</span> to four decimals — so the math was unquestionably right before timing anything.</div></div>
+      <div class="step key"><div class="h">The discovery that seeded Project 03 <span class="pill">turning point</span></div><div class="d">Benchmarking decode latency, the naive dequantize-then-matmul came out <em>~9× slower than fp16</em> — it expands the weight back to float first, adding work and memory. Only a fused kernel that reads the packed weights directly wins. <b>Speed lives in the kernel, not the data format.</b> That realization is the whole reason Project 03 exists.</div></div>
+      <div class="step"><div class="h">Swept the quality/compression Pareto</div><div class="d">Perplexity stayed flat across precisions (group-wise scales keep error tiny), so the optimal pick is INT4 with a large group — smallest, no measurable loss.</div></div>
+    </div>
+
+    <p>The lesson in one chart. At batch=1 decode the bottleneck is reading weights from memory — but the naive path is <b>slower than fp16</b>, while the <b>fused kernel</b> that reads packed weights directly wins (1.9× / 2.9×).</p>
     <div class="chart" id="c_latency"></div>
+    <p class="chartcap">↑ shorter is faster — the two tall red bars are the naive dequant-matmul; the short blue bars are the fused kernel.</p>
 
     <div class="gridcol">
       <div>
@@ -159,8 +200,16 @@
     <h2>Hand-written Metal kernels at the bandwidth roof</h2>
     <p class="sub">Six custom GPU kernels via <code>mx.fast.metal_kernel</code>, benchmarked against MLX's naive paths and its hand-optimized builtins.</p>
 
-    <p>These ops are memory-bound, so the figure of merit is achieved bandwidth vs the M3 Pro's ~150 GB/s roof. The custom kernels reach <b>77–85% of peak</b> — and two of them <b>beat MLX's own builtins</b>: the GEMV beats <code>mx.matmul</code>, and the flash-style attention beats <code>scaled_dot_product_attention</code> by keeping the score matrix on-chip.</p>
+    <div class="journey">
+      <div class="step key"><div class="h">First hand-written GPU kernel — RMSNorm <span class="pill">milestone</span></div><div class="d">A fused RMSNorm via <span class="mono">mx.fast.metal_kernel</span>: one threadgroup per row, the sum-of-squares reduced in on-chip threadgroup memory. Correct on the first try (error 9.5e-7) and straight to <em>84% of peak bandwidth</em> — 3.3× the naive multi-op path.</div></div>
+      <div class="step"><div class="h">Then softmax, SwiGLU, and a decode GEMV</div><div class="d">Each verified against an MLX reference. The batch=1 GEMV — the decode bottleneck — even <em>edged out the general <span class="mono">mx.matmul</span></em>: a dedicated matrix-vector kernel carries less overhead.</div></div>
+      <div class="step key"><div class="h">Flash-style attention, hand-written <span class="pill">the canonical one</span></div><div class="d">Computed scores and softmax in threadgroup memory and <em>never wrote the score vector to global memory</em> — the Flash Attention insight. It beat MLX's own <span class="mono">scaled_dot_product_attention</span> for the decode case (82% vs 79% of peak).</div></div>
+      <div class="step key"><div class="h">Capstone: the loop closes <span class="pill">02 + 03 fused</span></div><div class="d">A quantized GEMV that reads packed INT4/INT8 weights <em>directly in the kernel</em>, dequantizing inline — exactly the kernel Project 02 proved you need. 2.6× (INT8) / 2.4× (INT4) faster decode than fp32. (Chart at right.)</div></div>
+    </div>
+
+    <p>These ops are memory-bound, so the figure of merit is achieved bandwidth vs the M3 Pro's ~150 GB/s roof. The custom kernels reach <b>77–85% of peak</b> — and two <b>beat MLX's own builtins</b>.</p>
     <div class="chart" id="c_kernels"></div>
+    <p class="chartcap">↑ grey = MLX baseline, orange = our custom kernel, as % of the 150 GB/s memory roof.</p>
 
     <div class="gridcol">
       <div>
