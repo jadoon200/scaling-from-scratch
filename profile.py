@@ -79,6 +79,8 @@ def main():
     ap.add_argument("--mem-budget-gb", type=float, default=14.0,
                     help="skip configs whose estimated peak memory exceeds this; "
                          "default 14 GB leaves headroom on an 18 GB machine")
+    ap.add_argument("--json", type=str, default=None,
+                    help="also dump measured points to this JSON (for report.py)")
     args = ap.parse_args()
 
     cfg = SCALING_PRESETS[args.preset] if args.preset else ModelConfig()
@@ -101,6 +103,7 @@ def main():
         return m.loss(x, y)
     lg = nn.value_and_grad(model, loss_fn)
 
+    json_points = []
     for B, T in grid:
         est_gb = estimate_peak_gb(cfg, n_params, B, T, args.backward)
         if est_gb > args.mem_budget_gb:
@@ -137,8 +140,25 @@ def main():
         print(f"{B:>5} {T:>5} {dt*1000:>8.1f} {achieved_flops/1e12:>8.2f} "
               f"{achieved_bw/1e9:>7.0f} {intensity:>7.0f} {mfu*100:>5.1f}% {bound:>8}")
 
+        json_points.append({
+            "label": f"B{B}·T{T}", "batch": B, "seq": T,
+            "ms": dt * 1000, "tflops": achieved_flops / 1e12,
+            "gbps": achieved_bw / 1e9, "intensity": intensity,
+            "mfu": mfu, "bound": bound,
+        })
+
     print(f"\nridge point = {RIDGE_POINT:.0f} FLOP/byte "
           f"(intensity below this => memory-bound)")
+
+    if args.json:
+        import json
+        os.makedirs(os.path.dirname(args.json) or ".", exist_ok=True)
+        with open(args.json, "w") as f:
+            json.dump({"mode": "backward" if args.backward else "forward",
+                       "peak_tflops": PEAK_FLOPS_FP16 / 1e12,
+                       "peak_gbps": PEAK_BW_BYTES / 1e9,
+                       "ridge": RIDGE_POINT, "points": json_points}, f, indent=2)
+        print(f"wrote {args.json}")
 
 
 if __name__ == "__main__":
