@@ -46,9 +46,11 @@ class Transformer(nn.Module):
 
         if cache is None:
             cache = [None] * len(self.blocks)
-            mask = nn.MultiHeadAttention.create_additive_causal_mask(T) if T > 1 else None
-        else:
-            mask = None  # single-token decode step needs no mask
+
+        # Causal mask whenever we process >1 token at once (training, or the
+        # prefill pass over a prompt). A single-token decode step attends over
+        # the whole cached prefix and needs no mask.
+        mask = nn.MultiHeadAttention.create_additive_causal_mask(T) if T > 1 else None
 
         for block, c in zip(self.blocks, cache):
             x = block(x, mask=mask, cache=c)
