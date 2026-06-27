@@ -2,7 +2,16 @@ name: tests
 
 on:
   push:
+    branches: [mlx-tiny-transformer]
   pull_request:
+  workflow_dispatch:
+
+# macOS runners bill at a 10x minute multiplier, so don't fire on every
+# feature-branch push — only the default branch, PRs, and manual dispatch — and
+# cancel superseded runs so rapid pushes don't stack.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   portable:
