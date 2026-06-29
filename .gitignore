@@ -1,7 +1,3 @@
-# Claude config (local-only)
-.claude/
-CLAUDE.md
-
 # macOS
 .DS_Store
 
